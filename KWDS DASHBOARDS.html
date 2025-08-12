@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Monthly Searches Dashboard — Google Keyword Planner JSON</title>
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --card: #151922;
+      --muted: #9aa4b2;
+      --text: #e5e7eb;
+      --accent: #4f46e5;
+      --accent-2: #22d3ee;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      height: 100%;
+    }
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px 16px 48px;
+    }
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    h1 {
+      font-size: 20px;
+      margin: 0;
+      letter-spacing: .2px;
+    }
+    .uploader {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      background: var(--card);
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid #222738;
+    }
+    input[type="file"] {
+      color: var(--muted);
+      max-width: 320px;
+    }
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+    @media (min-width: 900px) {
+      .grid {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid #222738;
+      border-radius: 16px;
+      padding: 12px;
+      box-shadow: 0 10px 24px rgba(0,0,0,.18);
+    }
+    .card h2 {
+      margin: 4px 8px 8px;
+      font-size: 15px;
+      font-weight: 600;
+      color: #dbe3f4;
+    }
+    .charts {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+    .footer {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #10152a;
+      border: 1px solid #243056;
+      color: #b9c4da;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+    }
+    .row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 8px;
+      margin-bottom: 8px;
+      padding: 0 4px;
+    }
+    button {
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: white;
+      border: none;
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #1f2432;
+      color: #cbd5e1;
+      border: 1px solid #2c3347;
+    }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Monthly Searches Dashboard</h1>
+        <div class="hint">Upload your Google Keyword Planner JSON (array of keyword objects with monthly “Searches: Mon YYYY” fields).</div>
+      </div>
+      <div class="uploader">
+        <input id="fileInput" type="file" accept="application/json" />
+        <button id="demoBtn" class="secondary" title="Load a tiny demo dataset">Load demo</button>
+      </div>
+    </header>
+
+    <div class="row">
+      <span class="pill" id="summary-range">Range: —</span>
+      <span class="pill" id="summary-keywords">Keywords: —</span>
+      <span class="pill" id="summary-months">Months: —</span>
+    </div>
+
+    <div class="charts">
+      <div class="card">
+        <h2>1) Total Monthly Searches + 12‑Month Moving Average</h2>
+        <div id="chart-total" style="height:420px;"></div>
+      </div>
+      <div class="card">
+        <h2>2) Month‑over‑Month % Change (Total Searches)</h2>
+        <div id="chart-mom" style="height:420px;"></div>
+      </div>
+      <div class="card">
+        <h2>3) Top Keyword Share of Total (by Month)</h2>
+        <div id="chart-topshare" style="height:420px;"></div>
+      </div>
+      <div class="card">
+        <h2>4) Breadth of Growth: # of Keywords Growing MoM</h2>
+        <div id="chart-breadth" style="height:420px;"></div>
+      </div>
+      <div class="card">
+        <h2>5) Keyword × Month Heatmap (Search Volume)</h2>
+        <div id="chart-heatmap" style="height:520px;"></div>
+      </div>
+    </div>
+
+    <p class="footer">All calculations run locally in your browser. No data leaves your machine.</p>
+  </div>
+
+<script>
+// ---------- Utilities ----------
+const MONTHS = {
+  Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
+  Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11
+};
+
+function parseMonthKey(key) {
+  // expects like "Searches: Jul 2021"
+  const m = key.match(/^Searches:\s+([A-Za-z]{3})\s+(\d{4})$/);
+  if (!m) return null;
+  const mon = MONTHS[m[1]];
+  const year = +m[2];
+  if (mon == null) return null;
+  const d = new Date(Date.UTC(year, mon, 1));
+  const id = `${year}-${String(mon+1).padStart(2,'0')}`; // YYYY-MM
+  return { id, date: d, label: `${m[1]} ${year}` };
+}
+
+function movingAverage(arr, window=12) {
+  const out = new Array(arr.length).fill(null);
+  let sum = 0;
+  const q = [];
+  for (let i=0;i<arr.length;i++) {
+    const val = arr[i] ?? 0;
+    sum += val;
+    q.push(val);
+    if (q.length > window) sum -= q.shift();
+    if (q.length === window) out[i] = sum / window;
+  }
+  return out;
+}
+
+function pctChange(curr, prev) {
+  if (prev == null || prev === 0 || curr == null) return null;
+  return (curr - prev) / prev * 100;
+}
+
+function fmt(num) {
+  return num == null ? '—' : num.toLocaleString();
+}
+
+function fmtPct(num) {
+  return num == null ? '—' : `${num.toFixed(1)}%`;
+}
+
+// ---------- Core parsing & metrics ----------
+function analyze(data) {
+  if (!Array.isArray(data)) throw new Error('JSON must be an array of keyword objects.');
+
+  // Identify month columns
+  const monthColsSet = new Set();
+  const sample = data[0] || {};
+  Object.keys(sample).forEach(k => { if (k.startsWith('Searches:')) monthColsSet.add(k); });
+  if (monthColsSet.size === 0) {
+    // Try to scan all rows in case sample has missing
+    data.forEach(row => {
+      Object.keys(row).forEach(k => { if (k.startsWith('Searches:')) monthColsSet.add(k); });
+    });
+  }
+  const monthCols = Array.from(monthColsSet);
+  if (monthCols.length === 0) throw new Error('Could not find any "Searches: Mon YYYY" fields.');
+
+  // Parse month meta
+  const monthsMeta = monthCols
+    .map(k => ({ key:k, meta: parseMonthKey(k) }))
+    .filter(x => x.meta)
+    .sort((a,b) => a.meta.date - b.meta.date);
+
+  if (monthsMeta.length === 0) throw new Error('Could not parse month headers. Expecting e.g., "Searches: Jul 2021"');
+
+  const months = monthsMeta.map(m => m.meta.id); // YYYY-MM
+  const labels = monthsMeta.map(m => m.meta.label);
+
+  // Build matrix: keywords × months
+  const keywords = data.map(r => String(r['Keyword'] ?? '—'));
+  const avgMonthly = data.map(r => (typeof r['Avg. monthly searches'] === 'number' ? r['Avg. monthly searches'] : null));
+  const matrix = data.map(row => monthsMeta.map(m => {
+    const v = row[m.key];
+    const n = typeof v === 'number' ? v : (v == null ? null : +v);
+    return Number.isFinite(n) ? n : null;
+  }));
+
+  // Total per month
+  const totals = monthsMeta.map((_, j) => {
+    let s = 0; let any = false;
+    for (let i=0;i<matrix.length;i++) {
+      const v = matrix[i][j];
+      if (v != null) { s += v; any = true; }
+    }
+    return any ? s : null;
+  });
+
+  // MoM % change for totals
+  const mom = totals.map((v, idx) => idx===0? null : pctChange(v, totals[idx-1]));
+
+  // Top keyword share each month
+  const topShare = monthsMeta.map((_, j) => {
+    let top = -Infinity, total = 0;
+    for (let i=0;i<matrix.length;i++) {
+      const v = matrix[i][j] ?? 0;
+      if (v > top) top = v;
+      total += v;
+    }
+    if (!Number.isFinite(top) || total === 0) return null;
+    return top / total * 100;
+  });
+
+  // Breadth of growth: count of keywords with positive MoM
+  const breadth = monthsMeta.map((_, j) => {
+    if (j === 0) return null;
+    let count = 0;
+    for (let i=0;i<matrix.length;i++) {
+      const prev = matrix[i][j-1];
+      const curr = matrix[i][j];
+      if (prev != null && curr != null && curr > prev) count++;
+    }
+    return count;
+  });
+
+  // 12-month moving average on totals
+  const ma12 = movingAverage(totals, 12);
+
+  return { months, labels, keywords, avgMonthly, matrix, totals, mom, topShare, breadth, ma12 };
+}
+
+// ---------- Plotting ----------
+function plotAll(analysis) {
+  const { labels, keywords, matrix, totals, mom, topShare, breadth, ma12 } = analysis;
+
+  // 1) Total + 12M MA
+  const trTotal = {
+    x: labels, y: totals, type: 'scatter', mode: 'lines+markers',
+    name: 'Total searches', hovertemplate: '%{x}<br>Total: %{y:,}<extra></extra>'
+  };
+  const trMA = {
+    x: labels, y: ma12, type: 'scatter', mode: 'lines',
+    name: '12‑month MA', line: { dash: 'dot' }, hovertemplate: '%{x}<br>MA(12): %{y:,}<extra></extra>'
+  };
+  Plotly.newPlot('chart-total', [trTotal, trMA], {
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+    margin: {l:50,r:20,t:10,b:40},
+    xaxis: { tickangle: -45, gridcolor: '#222738' },
+    yaxis: { gridcolor: '#222738' },
+    legend: { orientation: 'h' },
+    responsive: true
+  }, {displaylogo:false});
+
+  // 2) MoM % change
+  Plotly.newPlot('chart-mom', [{
+    x: labels, y: mom, type: 'bar', name: 'MoM %', hovertemplate: '%{x}<br>% change: %{y:.1f}%<extra></extra>'
+  }], {
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+    margin: {l:50,r:20,t:10,b:40},
+    xaxis: { tickangle: -45, gridcolor: '#222738' },
+    yaxis: { title: '%', gridcolor: '#222738' },
+    responsive: true
+  }, {displaylogo:false});
+
+  // 3) Top keyword share of total per month
+  Plotly.newPlot('chart-topshare', [{
+    x: labels, y: topShare, type: 'scatter', mode: 'lines+markers', name: 'Top keyword share',
+    hovertemplate: '%{x}<br>Top keyword share: %{y:.1f}%<extra></extra>'
+  }], {
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+    margin: {l:50,r:20,t:10,b:40},
+    xaxis: { tickangle: -45, gridcolor: '#222738' },
+    yaxis: { title: '% of total', gridcolor: '#222738' },
+    responsive: true
+  }, {displaylogo:false});
+
+  // 4) Breadth of growth
+  Plotly.newPlot('chart-breadth', [{
+    x: labels, y: breadth, type: 'bar', name: '# keywords growing MoM',
+    hovertemplate: '%{x}<br>Growing: %{y}<extra></extra>'
+  }], {
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+    margin: {l:50,r:20,t:10,b:40},
+    xaxis: { tickangle: -45, gridcolor: '#222738' },
+    yaxis: { title: 'Count', gridcolor: '#222738' },
+    responsive: true
+  }, {displaylogo:false});
+
+  // 5) Heatmap (log-scale transform for readability on skewed volumes)
+  const z = matrix.map(row => row.map(v => v == null ? null : Math.log10(Math.max(1, v))));
+  const heat = {
+    x: labels,
+    y: keywords,
+    z,
+    type: 'heatmap',
+    hoverongaps: false,
+    colorbar: { title: 'log10(searches)' },
+  };
+  Plotly.newPlot('chart-heatmap', [heat], {
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+    margin: {l:160,r:20,t:10,b:60},
+    xaxis: { tickangle: -45, gridcolor: '#222738' },
+    yaxis: { automargin: true, gridcolor: '#222738' },
+    responsive: true
+  }, {displaylogo:false});
+}
+
+// ---------- Wiring ----------
+const fileInput = document.getElementById('fileInput');
+const demoBtn = document.getElementById('demoBtn');
+
+fileInput.addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const json = JSON.parse(text);
+    const a = analyze(json);
+    updateSummary(json, a);
+    plotAll(a);
+  } catch (err) {
+    alert('Failed to load JSON: ' + err.message);
+    console.error(err);
+  }
+});
+
+function updateSummary(json, a) {
+  const range = `${a.labels[0]} → ${a.labels[a.labels.length-1]}`;
+  document.getElementById('summary-range').textContent = `Range: ${range}`;
+  document.getElementById('summary-keywords').textContent = `Keywords: ${json.length.toLocaleString()}`;
+  document.getElementById('summary-months').textContent = `Months: ${a.labels.length}`;
+}
+
+// A tiny demo sample (subset & truncated numbers just for rendering)
+const DEMO = [
+  {"Keyword":"казино","Avg. monthly searches":74000,
+    "Searches: Jul 2024":135000,"Searches: Aug 2024":90500,"Searches: Sep 2024":90500,"Searches: Oct 2024":90500,
+    "Searches: Nov 2024":110000,"Searches: Dec 2024":110000,"Searches: Jan 2025":135000,"Searches: Feb 2025":135000,
+    "Searches: Mar 2025":165000,"Searches: Apr 2025":135000,"Searches: May 2025":135000,"Searches: Jun 2025":110000 },
+  {"Keyword":"онлайн казино","Avg. monthly searches":49500,
+    "Searches: Jul 2024":90500,"Searches: Aug 2024":49500,"Searches: Sep 2024":49500,"Searches: Oct 2024":49500,
+    "Searches: Nov 2024":49500,"Searches: Dec 2024":49500,"Searches: Jan 2025":60500,"Searches: Feb 2025":90500,
+    "Searches: Mar 2025":90500,"Searches: Apr 2025":60500,"Searches: May 2025":60500,"Searches: Jun 2025":49500 },
+  {"Keyword":"казино онлайн","Avg. monthly searches":40500,
+    "Searches: Jul 2024":49500,"Searches: Aug 2024":60500,"Searches: Sep 2024":60500,"Searches: Oct 2024":60500,
+    "Searches: Nov 2024":60500,"Searches: Dec 2024":60500,"Searches: Jan 2025":90500,"Searches: Feb 2025":110000,
+    "Searches: Mar 2025":110000,"Searches: Apr 2025":90500,"Searches: May 2025":74000,"Searches: Jun 2025":74000 },
+  {"Keyword":"слотокинг","Avg. monthly searches":673000,
+    "Searches: Jul 2024":1500000,"Searches: Aug 2024":1830000,"Searches: Sep 2024":1830000,"Searches: Oct 2024":1500000,
+    "Searches: Nov 2024":1500000,"Searches: Dec 2024":1500000,"Searches: Jan 2025":1500000,"Searches: Feb 2025":1220000,
+    "Searches: Mar 2025":1000000,"Searches: Apr 2025":823000,"Searches: May 2025":823000,"Searches: Jun 2025":823000 }
+];
+
+demoBtn.addEventListener('click', () => {
+  const a = analyze(DEMO);
+  updateSummary(DEMO, a);
+  plotAll(a);
+});
+
+// Initial draw with demo for convenience
+(() => {
+  const a = analyze(DEMO);
+  updateSummary(DEMO, a);
+  plotAll(a);
+})();
+</script>
+</body>
+</html>
